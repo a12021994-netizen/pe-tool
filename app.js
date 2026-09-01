@@ -1,0 +1,349 @@
+// ---------------------------------------------------------------
+// Storage shim: uses browser localStorage so this app runs standalone
+// (GitHub Pages, local file, etc.) without needing the Claude.ai
+// artifact environment.
+// ---------------------------------------------------------------
+if (!window.storage) {
+  window.storage = {
+    async get(key) {
+      const raw = localStorage.getItem(key);
+      if (raw === null) return null;
+      return { key, value: raw };
+    },
+    async set(key, value) {
+      localStorage.setItem(key, value);
+      return { key, value };
+    },
+    async delete(key) {
+      localStorage.removeItem(key);
+      return { key, deleted: true };
+    }
+  };
+}
+
+const CONFIG = {
+  GOOGLE_CLIENT_ID: '112914558340-rum51lfa8b0dmodpj3ie99t8ep59vh5r.apps.googleusercontent.com',
+  DRIVE_FOLDER_ID: '1JZhFdvWwXVtk8V3_86fkdvFcUo2U063K',
+  TRACKING_CSV_NAME: '券商報告追蹤總表.csv'
+};
+
+const KEY_ROWS = 'pe-tracker:rows';
+const KEY_SELECTED = 'pe-tracker:selected';
+
+async function loadJSON(key, fallback){
+  try{
+    const r = await window.storage.get(key);
+    return r ? JSON.parse(r.value) : fallback;
+  }catch(e){ return fallback; }
+}
+async function saveJSON(key, val){
+  try{ await window.storage.set(key, JSON.stringify(val)); }catch(e){ console.error('save failed', key, e); }
+}
+
+// ---------------------------------------------------------------
+// CSV parsing (handles quoted fields with embedded commas/quotes)
+// ---------------------------------------------------------------
+function parseCSV(text){
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++){
+    const c = text[i];
+    if (inQuotes){
+      if (c === '"'){
+        if (text[i+1] === '"'){ field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ','){ row.push(field); field = ''; }
+      else if (c === '\n' || c === '\r'){
+        if (c === '\r' && text[i+1] === '\n') i++;
+        row.push(field); field = '';
+        if (!(row.length === 1 && row[0] === '')) rows.push(row);
+        row = [];
+      } else field += c;
+    }
+  }
+  if (field !== '' || row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+
+function rowsFromCSV(text){
+  text = text.replace(/^\uFEFF/, ''); // 去掉檔案開頭可能出現的BOM，避免第一個欄位名稱比對不到
+  const parsed = parseCSV(text);
+  if (parsed.length < 2) return [];
+  const header = parsed[0].map(h => h.trim().replace(/^\uFEFF/, ''));
+  const idx = name => header.indexOf(name);
+  const iCode=idx('代碼'), iName=idx('名稱'), iDate=idx('報告日期'), iBroker=idx('券商'),
+        iTarget=idx('目標價'), iPrice=idx('報告當天股價'), iThis=idx('當年度EPS'),
+        iNext=idx('次年度EPS'), iRecent=idx('最近兩季預估EPS'), iFPE=idx('Forward PE');
+  if (iCode === -1 || iName === -1 || iDate === -1){
+    throw new Error('CSV欄位名稱對不上（找不到「代碼」「名稱」或「報告日期」欄），請確認資料表格式沒有跑掉');
+  }
+  const out = [];
+  for (let r = 1; r < parsed.length; r++){
+    const row = parsed[r];
+    if (!row || row.length < header.length) continue;
+    out.push({
+      code: (row[iCode]||'').trim(),
+      name: (row[iName]||'').trim(),
+      reportDate: (row[iDate]||'').trim(),
+      broker: (row[iBroker]||'').trim(),
+      target: row[iTarget] !== '' ? parseFloat(row[iTarget]) : null,
+      price: row[iPrice] !== '' ? parseFloat(row[iPrice]) : null,
+      epsThisYear: row[iThis] !== '' ? parseFloat(row[iThis]) : null,
+      epsNextYear: row[iNext] !== '' ? parseFloat(row[iNext]) : null,
+      epsRecentTwoQ: row[iRecent] !== '' ? parseFloat(row[iRecent]) : null,
+      forwardPE: (row[iFPE]||'').trim() // e.g. "25.4x (24F)" or "N/A (24F)"
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------
+// Google Drive (read-only) — used only to fetch the tracking CSV.
+// ---------------------------------------------------------------
+let driveAccessToken = null;
+
+function driveConfigured(){
+  return CONFIG.GOOGLE_CLIENT_ID && !CONFIG.GOOGLE_CLIENT_ID.startsWith('YOUR_');
+}
+
+function connectDrive(){
+  return new Promise((resolve, reject)=>{
+    if (!driveConfigured()){ reject(new Error('尚未設定 CONFIG.GOOGLE_CLIENT_ID')); return; }
+    if (!window.google || !google.accounts || !google.accounts.oauth2){
+      reject(new Error('Google Identity Services 尚未載入完成，請稍後再試一次'));
+      return;
+    }
+    const tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CONFIG.GOOGLE_CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/drive.readonly',
+      callback: (resp)=>{
+        if (resp.error){ reject(new Error(resp.error)); return; }
+        driveAccessToken = resp.access_token;
+        resolve(driveAccessToken);
+      }
+    });
+    tokenClient.requestAccessToken();
+  });
+}
+
+async function fetchTrackingCSV(){
+  const q = encodeURIComponent(`'${CONFIG.DRIVE_FOLDER_ID}' in parents and trashed=false and name='${CONFIG.TRACKING_CSV_NAME}'`);
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${driveAccessToken}` } });
+  if (!res.ok){
+    if (res.status === 401) throw new Error('授權過期，請重新按「同步資料」');
+    throw new Error('Drive API 錯誤，狀態碼 ' + res.status);
+  }
+  const data = await res.json();
+  const file = (data.files || [])[0];
+  if (!file) throw new Error(`Drive資料夾裡找不到 ${CONFIG.TRACKING_CSV_NAME}`);
+  const dl = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, { headers: { Authorization: `Bearer ${driveAccessToken}` } });
+  if (!dl.ok) throw new Error('下載資料表失敗，狀態碼 ' + dl.status);
+  return await dl.text();
+}
+
+async function syncFromDrive(){
+  const statusEl = document.getElementById('syncStatus');
+  const btn = document.getElementById('btnSync');
+  btn.disabled = true;
+  try{
+    if (!driveAccessToken){
+      statusEl.textContent = '連接中...（請在跳出的Google視窗完成授權）';
+      await connectDrive();
+    }
+    statusEl.textContent = '讀取資料表中...';
+    const csvText = await fetchTrackingCSV();
+    allRows = rowsFromCSV(csvText);
+    await saveJSON(KEY_ROWS, allRows);
+    statusEl.textContent = `同步完成，共 ${allRows.length} 筆資料，最後同步時間 ${new Date().toLocaleString('zh-TW')}。`;
+    if (!selectedCode && allRows.length) selectedCode = allRows[0].code;
+    renderStockOptions();
+    renderMain();
+  }catch(e){
+    statusEl.textContent = '同步失敗：' + e.message;
+  }
+  btn.disabled = false;
+}
+
+// ---------------------------------------------------------------
+// State + rendering
+// ---------------------------------------------------------------
+let allRows = [];
+let selectedCode = null;
+
+function stockList(){
+  const map = new Map();
+  allRows.forEach(r=>{ if (r.code && !map.has(r.code)) map.set(r.code, r.name); });
+  return [...map.entries()].map(([code,name])=>({code,name}));
+}
+
+function renderStockOptions(){
+  const sel = document.getElementById('stockSelect');
+  const stocks = stockList();
+  sel.innerHTML = stocks.length
+    ? stocks.map(s=>`<option value="${s.code}" ${s.code===selectedCode?'selected':''}>${s.code} ${s.name}</option>`).join('')
+    : '<option value="">尚無資料</option>';
+}
+
+function parsePE(peStr){
+  // "25.4x (24F)" -> 25.4 ; "N/A (24F)" -> null
+  if (!peStr) return null;
+  const m = peStr.match(/(-?[\d.]+)x/);
+  return m ? parseFloat(m[1]) : null;
+}
+
+function buildChartSVG(rows){
+  const points = rows.map(r=>({
+    date: new Date(r.reportDate),
+    reportDate: r.reportDate,
+    broker: r.broker,
+    price: r.price,
+    pe: parsePE(r.forwardPE)
+  })).sort((a,b)=> a.date - b.date);
+
+  const validPE = points.filter(p=>p.pe != null);
+  if (!validPE.length) return '';
+
+  const W = 640, H = 280, padL = 50, padR = 50, padT = 16, padB = 34;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const minDate = points[0].date.getTime();
+  const maxDate = points[points.length-1].date.getTime();
+  const dateSpan = Math.max(1, maxDate - minDate);
+  const xOf = d => padL + ((d.getTime()-minDate)/dateSpan) * plotW;
+
+  const peVals = validPE.map(p=>p.pe);
+  const maxPE = Math.max(...peVals), minPE = Math.min(...peVals);
+  const useLog = maxPE / Math.max(0.5, Math.abs(minPE) || 0.5) > 20 && minPE > 0;
+  const yMin = useLog ? Math.max(0.5, minPE*0.7) : Math.min(0, minPE*1.1);
+  const yMax = maxPE * 1.15;
+  const yOf = v => {
+    if (useLog){
+      const logMin = Math.log(yMin), logMax = Math.log(yMax);
+      return padT + plotH - ((Math.log(Math.max(v,yMin))-logMin)/(logMax-logMin)) * plotH;
+    }
+    return padT + plotH - ((v-yMin)/(yMax-yMin)) * plotH;
+  };
+
+  const priceVals = points.filter(p=>p.price!=null).map(p=>p.price);
+  const pMin = priceVals.length ? Math.min(...priceVals)*0.9 : 0;
+  const pMax = priceVals.length ? Math.max(...priceVals)*1.1 : 1;
+  const pyOf = v => padT + plotH - ((v-pMin)/(pMax-pMin)) * plotH;
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img" aria-label="Forward PE歷史圖">`;
+  [0,0.25,0.5,0.75,1].forEach(f=>{
+    const y = padT + plotH*f;
+    svg += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="var(--border)" stroke-width="1"/>`;
+  });
+  if (useLog){
+    const logMin = Math.log(yMin), logMax = Math.log(yMax);
+    [yMin, Math.sqrt(yMin*yMax), yMax].forEach(v=>{
+      const y = padT + plotH - ((Math.log(v)-logMin)/(logMax-logMin)) * plotH;
+      svg += `<text x="${padL-6}" y="${y+3}" text-anchor="end" font-size="10" fill="var(--text3)">${v.toFixed(1)}x</text>`;
+    });
+  } else {
+    [0,0.5,1].forEach(f=>{
+      const y = padT + plotH*(1-f);
+      const val = yMin + (yMax-yMin)*f;
+      svg += `<text x="${padL-6}" y="${y+3}" text-anchor="end" font-size="10" fill="var(--text3)">${val.toFixed(1)}x</text>`;
+    });
+  }
+  if (priceVals.length){
+    [0,0.5,1].forEach(f=>{
+      const y = padT + plotH*(1-f);
+      const val = pMin + (pMax-pMin)*f;
+      svg += `<text x="${W-padR+6}" y="${y+3}" text-anchor="start" font-size="10" fill="var(--text2)">${Math.round(val).toLocaleString()}</text>`;
+    });
+    const pricePts = points.filter(p=>p.price!=null).map(p=> `${xOf(p.date)},${pyOf(p.price)}`).join(' ');
+    svg += `<polyline points="${pricePts}" fill="none" stroke="var(--text2)" stroke-width="1.75"/>`;
+    points.filter(p=>p.price!=null).forEach(p=>{
+      svg += `<circle cx="${xOf(p.date)}" cy="${pyOf(p.price)}" r="2.5" fill="var(--text2)"/>`;
+    });
+  }
+  svg += `<text x="${padL}" y="10" font-size="9" fill="var(--text3)">Forward P/E (x)</text>`;
+  if (priceVals.length) svg += `<text x="${W-padR}" y="10" text-anchor="end" font-size="9" fill="var(--text2)">股價 (NT$)</text>`;
+
+  points.forEach(p=>{
+    const x = xOf(p.date);
+    if (p.pe != null){
+      const y = yOf(p.pe);
+      svg += `<circle cx="${x}" cy="${y}" r="4" fill="var(--accent)" stroke="var(--bg)" stroke-width="1.5"/>`;
+      svg += `<text x="${x}" y="${y-8}" text-anchor="middle" font-size="9" fill="var(--text2)">${p.pe.toFixed(1)}x</text>`;
+    } else {
+      svg += `<circle cx="${x}" cy="${padT+plotH}" r="3" fill="var(--warn)"/>`;
+      svg += `<text x="${x}" y="${padT+plotH-6}" text-anchor="middle" font-size="9" fill="var(--warn)">N/A</text>`;
+    }
+    svg += `<text x="${x}" y="${H-8}" text-anchor="middle" font-size="8" fill="var(--text3)">${p.reportDate.slice(2)}</text>`;
+  });
+  svg += `</svg>`;
+  return svg;
+}
+
+function buildTable(rows){
+  if (!rows.length) return '<div class="empty">尚無資料</div>';
+  const sorted = [...rows].sort((a,b)=> new Date(b.reportDate) - new Date(a.reportDate));
+  const trs = sorted.map(r=>{
+    const epsDisplay = r.epsThisYear != null || r.epsNextYear != null
+      ? `${r.epsThisYear ?? '-'} / ${r.epsNextYear ?? '-'}`
+      : '-';
+    return `<tr>
+      <td>${r.reportDate}</td>
+      <td>${r.broker}</td>
+      <td>${r.price != null ? r.price.toLocaleString() : '-'}</td>
+      <td>${r.target != null ? r.target.toLocaleString() : '-'}</td>
+      <td>${epsDisplay}</td>
+      <td>${r.forwardPE || '-'}</td>
+    </tr>`;
+  }).join('');
+  return `<table><thead><tr><th>報告日期</th><th>券商</th><th>當時股價</th><th>目標價</th><th>預估EPS(當年度/次年度)</th><th>發布當下Forward P/E</th></tr></thead><tbody>${trs}</tbody></table>`;
+}
+
+function renderMain(){
+  const area = document.getElementById('mainArea');
+  const rows = allRows.filter(r=>r.code === selectedCode);
+  if (!selectedCode || !rows.length){
+    area.innerHTML = `<div class="card"><div class="empty">${allRows.length ? '請選擇一檔股票' : '尚無資料，請按上方「同步資料」從Google Drive讀取'}</div></div>`;
+    return;
+  }
+  const chart = buildChartSVG(rows);
+  area.innerHTML = `
+    <div class="card">
+      <h2>各報告發布當下 Forward P/E</h2>
+      ${chart || '<div class="empty">資料不足以繪圖</div>'}
+      <div class="hint">灰線(右側股價軸)為每份報告當時股價；藍點(左側P/E軸)是該份報告發布當下算出的Forward P/E。紅點代表當下EPS估值為負或為零，本益比無意義。</div>
+    </div>
+    <div class="card">
+      <h2>已收錄的券商報告 (${rows.length})</h2>
+      ${buildTable(rows)}
+    </div>
+  `;
+}
+
+document.getElementById('stockSelect').onchange = (e)=>{
+  selectedCode = e.target.value;
+  saveJSON(KEY_SELECTED, selectedCode);
+  document.getElementById('stockTypeIn').value = '';
+  renderMain();
+};
+document.getElementById('stockTypeIn').addEventListener('input', (e)=>{
+  const code = e.target.value.trim();
+  if (!code) return;
+  const found = stockList().find(s=>s.code === code);
+  if (found){
+    selectedCode = code;
+    saveJSON(KEY_SELECTED, selectedCode);
+    document.getElementById('stockSelect').value = code;
+    renderMain();
+  }
+});
+document.getElementById('btnSync').onclick = syncFromDrive;
+
+(async function init(){
+  allRows = await loadJSON(KEY_ROWS, []);
+  selectedCode = await loadJSON(KEY_SELECTED, null);
+  if (!selectedCode && allRows.length) selectedCode = allRows[0].code;
+  renderStockOptions();
+  renderMain();
+})();
