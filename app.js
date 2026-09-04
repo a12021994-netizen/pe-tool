@@ -435,7 +435,7 @@ function buildPriceChartSVG(rows, dailyHistory){
   const allDates = points.map(p=>p.date.getTime()).concat(dailyHistory.map(h=>new Date(h.date).getTime()));
   const minDate = Math.min(...allDates);
   const maxDate = Math.max(...allDates);
-  const dateSpan = Math.max(1, maxDate - minDate);
+  svg += `<text x="${c.x}" y="${ly}" text-anchor="${c.shape==='star'?'end':'middle'}" font-size="8" fill="${c.color}" font-weight="${c.shape==='star'?'600':'400'}">${c.text}</text>`;
   const xOf = d => padL + ((d.getTime()-minDate)/dateSpan) * plotW;
 
   const pMin = Math.min(...priceVals)*0.9;
