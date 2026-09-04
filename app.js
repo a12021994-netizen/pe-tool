@@ -337,22 +337,29 @@ function buildDatedPoints(rows){
 }
 
 // 方案A - 圖1：本益比比較（Forward P/E vs 報告給予之P/E），單一Y軸
-function buildPEChartSVG(rows, dailyHistory){
+function buildPEChartSVG(rows, dailyHistory, currentStatus){
   const points = buildDatedPoints(rows).filter(p => p.pe != null || p.reportPE != null);
   if (!points.length) return '';
 
   const COLOR_FPE = 'var(--accent)';
   const COLOR_RPE = '#d97706';
+  const COLOR_CURRENT = '#0f6e56';
+  const hasCurrent = currentStatus && currentStatus.currentPE != null;
+  const currentDate = new Date();
 
   const W = 640, H = 220, padL = 44, padR = 16, padT = 14, padB = 60;
   const plotW = W - padL - padR, plotH = H - padT - padB;
-  const allDates = points.map(p=>p.date.getTime()).concat((dailyHistory||[]).map(h=>new Date(h.date).getTime()));
+  const allDates = points.map(p=>p.date.getTime())
+    .concat((dailyHistory||[]).map(h=>new Date(h.date).getTime()))
+    .concat(hasCurrent ? [currentDate.getTime()] : []);
   const minDate = Math.min(...allDates);
   const maxDate = Math.max(...allDates);
   const dateSpan = Math.max(1, maxDate - minDate);
   const xOf = d => padL + ((d.getTime()-minDate)/dateSpan) * plotW;
 
-  const peVals = points.filter(p=>p.pe!=null).map(p=>p.pe).concat(points.filter(p=>p.reportPE!=null).map(p=>p.reportPE));
+  const peVals = points.filter(p=>p.pe!=null).map(p=>p.pe)
+    .concat(points.filter(p=>p.reportPE!=null).map(p=>p.reportPE))
+    .concat(hasCurrent ? [currentStatus.currentPE] : []);
   const maxPE = Math.max(...peVals), minPE = Math.min(...peVals);
   const useLog = maxPE / Math.max(0.5, Math.abs(minPE) || 0.5) > 20 && minPE > 0;
   const yMin = useLog ? Math.max(0.5, minPE*0.7) : Math.min(0, minPE*1.1);
@@ -390,12 +397,16 @@ function buildPEChartSVG(rows, dailyHistory){
   const candidates = [];
   points.forEach(p=>{
     const x = xOf(p.date);
-    if (p.reportPE != null) candidates.push({ x, y: yOf(p.reportPE), text: p.reportPE.toFixed(1)+'x', color: COLOR_RPE, dotColor: COLOR_RPE, dotR: 3.5 });
-    if (p.pe != null) candidates.push({ x, y: yOf(p.pe), text: p.pe.toFixed(1)+'x', color: 'var(--text2)', dotColor: COLOR_FPE, dotR: 4 });
+    if (p.reportPE != null) candidates.push({ x, y: yOf(p.reportPE), text: p.reportPE.toFixed(1)+'x', color: COLOR_RPE, dotColor: COLOR_RPE, dotR: 3.5, shape: 'circle' });
+    if (p.pe != null) candidates.push({ x, y: yOf(p.pe), text: p.pe.toFixed(1)+'x', color: 'var(--text2)', dotColor: COLOR_FPE, dotR: 4, shape: 'circle' });
   });
+  if (hasCurrent){
+    const x = xOf(currentDate), y = yOf(currentStatus.currentPE);
+    candidates.push({ x, y, text: `目前 ${currentStatus.currentPE.toFixed(1)}x`, color: COLOR_CURRENT, dotColor: COLOR_CURRENT, dotR: 5, shape: 'star' });
+  }
   candidates.sort((a,b)=> a.x - b.x || a.y - b.y);
   const placedLabels = [];
-  const LABEL_W = 26, LABEL_H = 11;
+  const LABEL_W = 30, LABEL_H = 11;
   function findFreeSlot(x, baseY){
     for (let level = 0; level < 6; level++){
       const y = baseY - 6 - level*LABEL_H;
@@ -408,11 +419,23 @@ function buildPEChartSVG(rows, dailyHistory){
   }
 
   candidates.forEach(c=>{
-    svg += `<circle cx="${c.x}" cy="${c.y}" r="${c.dotR}" fill="${c.dotColor}" stroke="var(--bg)" stroke-width="1.3"/>`;
+    if (c.shape === 'star'){
+      // 目前推估：用星形標記跟歷史報告的圓點區分
+      const r1 = c.dotR + 2.5, r2 = (c.dotR + 2.5) * 0.45;
+      let pts = [];
+      for (let i = 0; i < 10; i++){
+        const r = i % 2 === 0 ? r1 : r2;
+        const ang = (Math.PI / 5) * i - Math.PI / 2;
+        pts.push(`${c.x + r*Math.cos(ang)},${c.y + r*Math.sin(ang)}`);
+      }
+      svg += `<polygon points="${pts.join(' ')}" fill="${c.dotColor}" stroke="var(--bg)" stroke-width="1"/>`;
+    } else {
+      svg += `<circle cx="${c.x}" cy="${c.y}" r="${c.dotR}" fill="${c.dotColor}" stroke="var(--bg)" stroke-width="1.3"/>`;
+    }
   });
   candidates.forEach(c=>{
     const ly = findFreeSlot(c.x, c.y);
-    svg += `<text x="${c.x}" y="${ly}" text-anchor="middle" font-size="8" fill="${c.color}">${c.text}</text>`;
+    svg += `<text x="${c.x}" y="${ly}" text-anchor="${c.shape==='star'?'end':'middle'}" font-size="8" fill="${c.color}" font-weight="${c.shape==='star'?'600':'400'}">${c.text}</text>`;
   });
 
   svg += drawDateAxis(points, xOf, H, true);
@@ -435,7 +458,7 @@ function buildPriceChartSVG(rows, dailyHistory){
   const allDates = points.map(p=>p.date.getTime()).concat(dailyHistory.map(h=>new Date(h.date).getTime()));
   const minDate = Math.min(...allDates);
   const maxDate = Math.max(...allDates);
-  svg += `<text x="${c.x}" y="${ly}" text-anchor="${c.shape==='star'?'end':'middle'}" font-size="8" fill="${c.color}" font-weight="${c.shape==='star'?'600':'400'}">${c.text}</text>`;
+  const dateSpan = Math.max(1, maxDate - minDate);
   const xOf = d => padL + ((d.getTime()-minDate)/dateSpan) * plotW;
 
   const pMin = Math.min(...priceVals)*0.9;
@@ -528,7 +551,7 @@ function renderMain(){
     return;
   }
   const status = computeCurrentStatus(rows, priceHistory);
-  const peChart = buildPEChartSVG(rows, priceHistory);
+  const peChart = buildPEChartSVG(rows, priceHistory, status);
   const priceChart = buildPriceChartSVG(rows, priceHistory);
   const statusHtml = status ? `
     <div class="card">
@@ -548,6 +571,7 @@ function renderMain(){
         <span><span class="sw" style="background:var(--accent)"></span>Forward P/E（自行換算）</span>
         <span><span class="sw" style="background:#d97706"></span>報告給予之 P/E</span>
         <span><span class="sw" style="background:var(--warn)"></span>EPS為負/零，本益比無意義</span>
+        <span><span class="sw" style="background:#0f6e56"></span>★ 目前推估Forward P/E</span>
       </div>
       <div class="hint">點與點之間不連線，僅呈現各次報告發布當下的數值。</div>
     </div>
