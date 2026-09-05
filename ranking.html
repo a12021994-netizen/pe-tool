@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>全部股票排行 - Forward P/E 追蹤工具</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<div class="app">
+
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <div class="row">
+      <a href="index.html" class="small" style="display:inline-block;padding:6px 12px;border:0.5px solid var(--border-strong);border-radius:6px;text-decoration:none;color:var(--text)">← 個股明細</a>
+      <h2 style="margin:0">全部股票排行</h2>
+    </div>
+    <button class="small" id="btnSync">🔄 同步資料</button>
+  </div>
+  <div class="hint">比較「最新一份報告給予之P/E」與「用今日股價換算的目前Forward P/E」，差值由大到小排序。只列入最新報告在9個月內、且有報告給予之P/E的股票。按「同步資料」會從Google Drive重新讀取並用FinMind更新股價（第一次使用需要先完成Google授權）。</div>
+  <div id="syncStatus" class="hint" style="margin-top:6px"></div>
+</div>
+
+<div class="card">
+  <div id="rankingArea"></div>
+</div>
+
+</div>
+<script src="shared.js"></script>
+<script src="ranking.js"></script>
+</body>
+</html>
