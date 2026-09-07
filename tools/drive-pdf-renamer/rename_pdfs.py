@@ -68,7 +68,16 @@ def list_pdfs(service, folder_id: str) -> list[dict]:
     return files
 
 
-def extract_first_page_text(service, file_id: str) -> str:
+MAX_PAGES = 2  # 有些券商的股票代碼/名稱標題其實印在第二頁，保守多讀一頁
+
+# 農曆/中文數字月份轉阿拉伯數字，給 date style "cjk_month" 用（例如「九月 04, 2026」）
+CJK_MONTH_NUM = {
+    "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
+    "七": 7, "八": 8, "九": 9, "十": 10, "十一": 11, "十二": 12,
+}
+
+
+def extract_report_text(service, file_id: str, max_pages: int = MAX_PAGES) -> str:
     import pdfplumber
 
     request = service.files().get_media(fileId=file_id)
@@ -79,9 +88,8 @@ def extract_first_page_text(service, file_id: str) -> str:
         _, done = downloader.next_chunk()
     buf.seek(0)
     with pdfplumber.open(buf) as pdf:
-        if not pdf.pages:
-            return ""
-        return pdf.pages[0].extract_text() or ""
+        pages = pdf.pages[:max_pages]
+        return "\n".join(p.extract_text() or "" for p in pages)
 
 
 def detect_broker(text: str, brokers: list[dict]) -> dict | None:
@@ -92,21 +100,47 @@ def detect_broker(text: str, brokers: list[dict]) -> dict | None:
     return None
 
 
-def extract_fields(text: str, broker: dict) -> tuple[str, str, str] | None:
-    """回傳 (股票代碼, 股票名稱, YYYYMM)，抓不到就回傳 None。"""
-    name_code_pattern = broker["extract"]["stock_code_name"]["pattern"]
-    date_pattern = broker["extract"]["date"]["pattern"]
-
-    name_match = re.search(name_code_pattern, text)
-    date_match = re.search(date_pattern, text)
-    if not name_match or not date_match:
+def parse_date(text: str, date_rule: dict) -> str | None:
+    """依 date_rule 裡的 style 解析出報告日期，回傳 YYYYMM，抓不到回傳 None。"""
+    match = re.search(date_rule["pattern"], text)
+    if not match:
         return None
 
-    name = name_match.group(1).strip()
-    code = name_match.group(2).strip()
-    year, month = date_match.group(1), date_match.group(2).zfill(2)
-    yyyymm = f"{year}{month}"
-    return code, name, yyyymm
+    style = date_rule.get("style", "slash")
+    if style in ("slash", "cjk"):
+        # 兩種都是 3 個 group：年、月、日（cjk 只是分隔符是「年/月/日」而不是「/」）
+        year, month = match.group(1), match.group(2).zfill(2)
+        return f"{year}{month}"
+    if style == "roc7":
+        # 民國年格式的 7 位數字，例如 1150904 = 民國115年09月04日
+        raw = match.group(1)
+        roc_year, month = int(raw[:3]), raw[3:5]
+        return f"{roc_year + 1911}{month}"
+    if style == "cjk_month":
+        # 中文數字月份，例如「九月 04, 2026」
+        month_name = match.group(1).rstrip("月")
+        month = CJK_MONTH_NUM.get(month_name)
+        if month is None:
+            return None
+        year = match.group(3)
+        return f"{year}{str(month).zfill(2)}"
+    raise ValueError(f"未知的 date style: {style}")
+
+
+def extract_fields(text: str, broker: dict) -> tuple[str, str, str] | None:
+    """回傳 (股票代碼, 股票名稱, YYYYMM)，抓不到就回傳 None。"""
+    extract = broker["extract"]
+
+    code_match = re.search(extract["code"]["pattern"], text)
+    name_match = re.search(extract["name"]["pattern"], text)
+    if not code_match or not name_match:
+        return None
+
+    yyyymm = parse_date(text, extract["date"])
+    if yyyymm is None:
+        return None
+
+    return code_match.group(1).strip(), name_match.group(1).strip(), yyyymm
 
 
 def sanitize(part: str) -> str:
@@ -139,7 +173,7 @@ def main() -> None:
     for f in files:
         file_id, old_name = f["id"], f["name"]
         try:
-            text = extract_first_page_text(service, file_id)
+            text = extract_report_text(service, file_id)
         except Exception as exc:  # noqa: BLE001
             print(f"[略過] {old_name}：讀取 PDF 內容失敗（{exc}）")
             skipped += 1

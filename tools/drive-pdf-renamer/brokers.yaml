@@ -1,28 +1,43 @@
 # 券商辨識與命名規則設定檔
 #
 # 每一份 PDF 會依序比對下面每個券商區塊的 match.contains 關鍵字（只要有一個出現在
-# PDF 第一頁文字裡就算命中，由上而下比對，第一個命中的就採用），命中後就用該區塊
+# PDF 前兩頁文字裡就算命中，由上而下比對，第一個命中的就採用），命中後就用該區塊
 # 的 extract 規則去擷取股票代碼、股票名稱、報告日期，並用 display_name 當作檔名
 # 裡的券商名稱。
 #
-# 要支援新的券商，只要在 brokers 底下複製一個區塊出來改，不用動到程式本身。
+# extract 底下有三個獨立規則：
+#   code：正規表示式，group(1) 要抓出股票代碼
+#   name：正規表示式，group(1) 要抓出股票名稱
+#   date：有 style 跟 pattern 兩個欄位
+#     - style: slash      → pattern 有 3 個 group：年、月、日，例如 2026/07/09
+#     - style: cjk        → pattern 有 3 個 group：年、月、日，例如 2026 年 7 月 9 日
+#     - style: roc7       → pattern 有 1 個 group：民國年 7 碼緊接在一起，例如 1150904
+#                            （民國115年09月04日），程式會自動 +1911 換算西元年
+#     - style: cjk_month  → pattern 有 3 個 group：中文數字月份、日、年，
+#                            例如「九月 04, 2026」
 #
-# 注意：下面國泰期貨以外的券商區塊，是先用「股票名稱 股票代碼 TT」+「YYYY/MM/DD」
-# 這種台灣投顧報告常見排版打底，match.contains 的公司全名也是用一般公開資訊猜測，
-# 兩者都還沒拿這些券商的真實報告驗證過。正式使用前，請先用 workflow 的
-# dry_run: true 跑一次，確認擷取結果正確；如果某家券商的排版不一樣（例如代碼跟
-# 名稱位置相反、日期格式不同），就照下面的範本調整那家的 pattern 或
+# 要支援新的券商，只要在 brokers 底下複製一個區塊出來改，不用動到程式本身；
+# 程式預設會讀 PDF 前兩頁的文字來比對（有些券商的代碼/名稱標題印在第二頁）。
+#
+# 目前只有國泰期貨、華南投顧、富邦投顧、凱基投顧這四家是拿實際報告驗證過的；
+# 其他券商的區塊是先用「股票名稱 股票代碼 TT」+「YYYY/MM/DD」這種常見排版打底，
+# match.contains 的公司全名也是用一般公開資訊猜測，兩者都還沒拿這些券商的真實
+# 報告驗證過。正式使用前，請先用 workflow 的 dry_run: true 跑一次，確認擷取結
+# 果正確；如果某家券商的排版不一樣，就照下面的範本調整那家的 pattern 或
 # match.contains 關鍵字即可。
 
-# 共用的預設擷取規則：多數台灣投顧報告都是「股票名稱 股票代碼 TT」+ 西元
-# YYYY/MM/DD 日期，沒特別排版差異的券商可以直接沿用（用 <<: *default_extract）。
+# 共用的預設擷取規則：「股票名稱 股票代碼 TT」+ 西元 YYYY/MM/DD 日期，
+# 沒特別驗證過排版的券商先用這個打底（用 <<: *default_extract）。
 _default_extract: &default_extract
-  # 擷取「股票名稱 股票代碼 TT」，例如「中砂 1560 TT」「融程電 3416TT」
-  # 名稱允許中文/英文/數字混合，代碼抓 3~6 碼數字
-  stock_code_name:
-    pattern: '([一-鿿A-Za-z0-9&\-]{1,12})\s*[\r\n\s]*(\d{3,6})\s*TT'
+  # 擷取股票代碼，例如「中砂 1560 TT」裡的 1560
+  code:
+    pattern: '(\d{3,6})\s*TT'
+  # 擷取股票名稱，例如「中砂 1560 TT」裡的中砂；名稱允許中文/英文/數字混合
+  name:
+    pattern: '([一-鿿A-Za-z0-9&\-]{1,12})\s*[\r\n\s]*\d{3,6}\s*TT'
   # 擷取報告日期，格式為西元年/月/日，例如「2026/07/09」
   date:
+    style: slash
     pattern: '(\d{4})[/／](\d{1,2})[/／](\d{1,2})'
 
 brokers:
@@ -35,30 +50,67 @@ brokers:
     extract:
       <<: *default_extract
 
+  - name: 華南投顧
+    display_name: 華南
+    match:
+      contains:
+        - "華南投顧"
+    extract:
+      # 報告第一行固定格式：華南投顧-股票代碼-股票名稱-民國年月日
+      # 例如「華南投顧-2467-志聖-1150904」「華南投顧-4571-鈞興-KY-1150904」
+      # 名稱本身可能含有「-」（如「鈞興-KY」），所以用非貪婪比對一路抓到最後
+      # 固定 7 碼民國日期前為止，不能只抓到第一個「-」就停。
+      code:
+        pattern: '華南投顧-(\d{3,6})-'
+      name:
+        pattern: '華南投顧-\d{3,6}-(.+?)-\d{7}'
+      date:
+        style: roc7
+        pattern: '華南投顧-\d{3,6}-.+?-(\d{7})'
+
+  - name: 富邦投顧
+    display_name: 富邦
+    match:
+      contains:
+        - "富邦投顧"
+        - "富邦證券股份有限公司"
+    extract:
+      # 報告內文格式：股票名稱 (股票代碼 TT)，例如「台達電 (2308 TT)」
+      code:
+        pattern: '\(\s*(\d{3,6})\s*TT\s*\)'
+      name:
+        pattern: '([一-鿿A-Za-z0-9&\-]{1,10})\s*\(\s*\d{3,6}\s*TT\s*\)'
+      # 日期格式為「2026 年 9 月 4 日」
+      date:
+        style: cjk
+        pattern: '(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日'
+
+  - name: 凱基投顧
+    display_name: 凱基
+    match:
+      contains:
+        - "凱基投顧"
+        - "凱基證券投資顧問股份有限公司"
+    extract:
+      # 報告內文格式：台灣 股票名稱 \n (股票代碼.TW/股票代碼 TT)，
+      # 例如「台灣 倍利科\n\n(7822.TW/7822 TT)」
+      code:
+        pattern: '\((\d{3,6})\.TW/\d{3,6}\s*TT\)'
+      name:
+        pattern: '台灣\s+([一-鿿A-Za-z0-9&\-]{1,10})\s*[\r\n\s]*\(\d{3,6}\.TW/\d{3,6}\s*TT\)'
+      # 日期格式為中文數字月份，例如「九月 04, 2026」
+      date:
+        style: cjk_month
+        pattern: '([一二三四五六七八九十]+月)\s*(\d{1,2}),\s*(\d{4})'
+
+  # 下面這些券商還沒拿真實報告驗證過，是用公開資訊猜的公司全名 + 通用排版打底，
+  # 使用前務必先用 dry_run: true 測試，抓錯了再照上面驗證過的區塊為範本調整。
   - name: 元大證券
     display_name: 元大
     match:
       contains:
         - "元大證券股份有限公司"
         - "元大投顧"
-    extract:
-      <<: *default_extract
-
-  - name: 凱基證券
-    display_name: 凱基
-    match:
-      contains:
-        - "凱基證券股份有限公司"
-        - "凱基投顧"
-    extract:
-      <<: *default_extract
-
-  - name: 富邦證券
-    display_name: 富邦
-    match:
-      contains:
-        - "富邦證券股份有限公司"
-        - "富邦投顧"
     extract:
       <<: *default_extract
 
@@ -126,15 +178,6 @@ brokers:
     extract:
       <<: *default_extract
 
-  - name: 華南永昌證券
-    display_name: 華南永昌
-    match:
-      contains:
-        - "華南永昌證券股份有限公司"
-        - "華南永昌證券投資顧問"
-    extract:
-      <<: *default_extract
-
   - name: 元富證券
     display_name: 元富
     match:
@@ -195,7 +238,10 @@ brokers:
   #     contains:
   #       - "報告裡一定會出現、可以拿來辨識券商的關鍵字"
   #   extract:
-  #     stock_code_name:
-  #       pattern: '在這裡放能抓出「股票名稱」與「股票代碼」的正規表示式'
+  #     code:
+  #       pattern: '在這裡放能抓出「股票代碼」的正規表示式，group(1) 是代碼'
+  #     name:
+  #       pattern: '在這裡放能抓出「股票名稱」的正規表示式，group(1) 是名稱'
   #     date:
+  #       style: slash  # 或 cjk / roc7 / cjk_month，看報告日期長怎樣
   #       pattern: '在這裡放能抓出報告日期的正規表示式'
