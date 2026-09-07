@@ -127,20 +127,28 @@ def parse_date(text: str, date_rule: dict) -> str | None:
     raise ValueError(f"未知的 date style: {style}")
 
 
+def extract_one(text: str, rule: dict) -> str | None:
+    """依 rule 的 pattern 搜尋文字，回傳指定 group（預設第 1 組）的內容。"""
+    match = re.search(rule["pattern"], text)
+    if not match:
+        return None
+    return match.group(rule.get("group", 1))
+
+
 def extract_fields(text: str, broker: dict) -> tuple[str, str, str] | None:
     """回傳 (股票代碼, 股票名稱, YYYYMM)，抓不到就回傳 None。"""
     extract = broker["extract"]
 
-    code_match = re.search(extract["code"]["pattern"], text)
-    name_match = re.search(extract["name"]["pattern"], text)
-    if not code_match or not name_match:
+    code = extract_one(text, extract["code"])
+    name = extract_one(text, extract["name"])
+    if code is None or name is None:
         return None
 
     yyyymm = parse_date(text, extract["date"])
     if yyyymm is None:
         return None
 
-    return code_match.group(1).strip(), name_match.group(1).strip(), yyyymm
+    return code.strip(), name.strip(), yyyymm
 
 
 def sanitize(part: str) -> str:
