@@ -1,10 +1,29 @@
 # 券商辨識與命名規則設定檔
 #
 # 每一份 PDF 會依序比對下面每個券商區塊的 match.contains 關鍵字（只要有一個出現在
-# PDF 第一頁文字裡就算命中），命中後就用該區塊的 extract 規則去擷取股票代碼、
-# 股票名稱、報告日期，並用 display_name 當作檔名裡的券商名稱。
+# PDF 第一頁文字裡就算命中，由上而下比對，第一個命中的就採用），命中後就用該區塊
+# 的 extract 規則去擷取股票代碼、股票名稱、報告日期，並用 display_name 當作檔名
+# 裡的券商名稱。
 #
 # 要支援新的券商，只要在 brokers 底下複製一個區塊出來改，不用動到程式本身。
+#
+# 注意：下面國泰期貨以外的券商區塊，是先用「股票名稱 股票代碼 TT」+「YYYY/MM/DD」
+# 這種台灣投顧報告常見排版打底，match.contains 的公司全名也是用一般公開資訊猜測，
+# 兩者都還沒拿這些券商的真實報告驗證過。正式使用前，請先用 workflow 的
+# dry_run: true 跑一次，確認擷取結果正確；如果某家券商的排版不一樣（例如代碼跟
+# 名稱位置相反、日期格式不同），就照下面的範本調整那家的 pattern 或
+# match.contains 關鍵字即可。
+
+# 共用的預設擷取規則：多數台灣投顧報告都是「股票名稱 股票代碼 TT」+ 西元
+# YYYY/MM/DD 日期，沒特別排版差異的券商可以直接沿用（用 <<: *default_extract）。
+_default_extract: &default_extract
+  # 擷取「股票名稱 股票代碼 TT」，例如「中砂 1560 TT」「融程電 3416TT」
+  # 名稱允許中文/英文/數字混合，代碼抓 3~6 碼數字
+  stock_code_name:
+    pattern: '([一-鿿A-Za-z0-9&\-]{1,12})\s*[\r\n\s]*(\d{3,6})\s*TT'
+  # 擷取報告日期，格式為西元年/月/日，例如「2026/07/09」
+  date:
+    pattern: '(\d{4})[/／](\d{1,2})[/／](\d{1,2})'
 
 brokers:
   - name: 國泰期貨
@@ -14,13 +33,160 @@ brokers:
         - "國泰期貨股份有限公司"
         - "國泰證期研究部"
     extract:
-      # 擷取「股票名稱 股票代碼 TT」，例如「中砂 1560 TT」「融程電 3416TT」
-      # 名稱允許中文/英文/數字混合，代碼抓 3~6 碼數字
-      stock_code_name:
-        pattern: '([一-鿿A-Za-z0-9&\-]{1,12})\s*[\r\n\s]*(\d{3,6})\s*TT'
-      # 擷取報告日期，格式為西元年/月/日，例如「2026/07/09」
-      date:
-        pattern: '(\d{4})[/／](\d{1,2})[/／](\d{1,2})'
+      <<: *default_extract
+
+  - name: 元大證券
+    display_name: 元大
+    match:
+      contains:
+        - "元大證券股份有限公司"
+        - "元大投顧"
+    extract:
+      <<: *default_extract
+
+  - name: 凱基證券
+    display_name: 凱基
+    match:
+      contains:
+        - "凱基證券股份有限公司"
+        - "凱基投顧"
+    extract:
+      <<: *default_extract
+
+  - name: 富邦證券
+    display_name: 富邦
+    match:
+      contains:
+        - "富邦證券股份有限公司"
+        - "富邦投顧"
+    extract:
+      <<: *default_extract
+
+  - name: 群益證券
+    display_name: 群益
+    match:
+      contains:
+        - "群益金鼎證券股份有限公司"
+        - "群益證券股份有限公司"
+        - "群益投顧"
+    extract:
+      <<: *default_extract
+
+  - name: 統一證券
+    display_name: 統一
+    match:
+      contains:
+        - "統一證券股份有限公司"
+        - "統一投顧"
+    extract:
+      <<: *default_extract
+
+  - name: 兆豐證券
+    display_name: 兆豐
+    match:
+      contains:
+        - "兆豐證券股份有限公司"
+        - "兆豐證券投資顧問"
+    extract:
+      <<: *default_extract
+
+  - name: 永豐金證券
+    display_name: 永豐金
+    match:
+      contains:
+        - "永豐金證券股份有限公司"
+        - "永豐金證券投資顧問"
+    extract:
+      <<: *default_extract
+
+  - name: 台新證券
+    display_name: 台新
+    match:
+      contains:
+        - "台新證券股份有限公司"
+        - "台新證券投資顧問"
+    extract:
+      <<: *default_extract
+
+  - name: 中信證券
+    display_name: 中信
+    match:
+      contains:
+        - "中國信託證券股份有限公司"
+        - "中信證券投資顧問"
+    extract:
+      <<: *default_extract
+
+  - name: 第一金證券
+    display_name: 第一金
+    match:
+      contains:
+        - "第一金證券股份有限公司"
+        - "第一金證券投資顧問"
+    extract:
+      <<: *default_extract
+
+  - name: 華南永昌證券
+    display_name: 華南永昌
+    match:
+      contains:
+        - "華南永昌證券股份有限公司"
+        - "華南永昌證券投資顧問"
+    extract:
+      <<: *default_extract
+
+  - name: 元富證券
+    display_name: 元富
+    match:
+      contains:
+        - "元富證券股份有限公司"
+        - "元富證券投資顧問"
+    extract:
+      <<: *default_extract
+
+  - name: 康和證券
+    display_name: 康和
+    match:
+      contains:
+        - "康和證券股份有限公司"
+        - "康和證券投資顧問"
+    extract:
+      <<: *default_extract
+
+  - name: 日盛證券
+    display_name: 日盛
+    match:
+      contains:
+        - "日盛證券股份有限公司"
+        - "日盛證券投資顧問"
+    extract:
+      <<: *default_extract
+
+  - name: 玉山證券
+    display_name: 玉山
+    match:
+      contains:
+        - "玉山證券股份有限公司"
+        - "玉山證券投資顧問"
+    extract:
+      <<: *default_extract
+
+  - name: 國票證券
+    display_name: 國票
+    match:
+      contains:
+        - "國票證券股份有限公司"
+        - "國票證券投資顧問"
+    extract:
+      <<: *default_extract
+
+  - name: 群益期貨
+    display_name: 群益期貨
+    match:
+      contains:
+        - "群益期貨股份有限公司"
+    extract:
+      <<: *default_extract
 
   # 範例：之後如果要加其他券商，可以參考下面這個空白範本
   # - name: 範例券商全名
