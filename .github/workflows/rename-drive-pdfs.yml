@@ -1,0 +1,48 @@
+name: Rename Drive PDFs
+
+# 手動觸發：到 GitHub 的 Actions 頁籤選這個 workflow，按「Run workflow」，
+# 填入來源/目的資料夾 ID 後執行。
+on:
+  workflow_dispatch:
+    inputs:
+      source_folder_id:
+        description: "來源資料夾 ID（放未更名 PDF 的資料夾，如「未更名」）"
+        required: true
+      target_folder_id:
+        description: "目的資料夾 ID（改完名要搬過去的資料夾，如「投顧報告資料庫」）"
+        required: true
+      dry_run:
+        description: "true = 只預覽改名結果，不真的更動 Google Drive"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  rename:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: tools/drive-pdf-renamer
+        run: pip install -r requirements.txt
+
+      - name: Run renamer
+        working-directory: tools/drive-pdf-renamer
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          ARGS="--source-folder-id ${{ inputs.source_folder_id }} --target-folder-id ${{ inputs.target_folder_id }}"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          python rename_pdfs.py $ARGS
