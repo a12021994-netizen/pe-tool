@@ -104,11 +104,12 @@ brokers:
         - "kgi.com"
     extract:
       # 報告內文格式：台灣 股票名稱 \n (股票代碼.TW/股票代碼 TT)，
-      # 例如「台灣 倍利科\n\n(7822.TW/7822 TT)」
+      # 例如「台灣 倍利科\n\n(7822.TW/7822 TT)」；上櫃股票則是「.TWO」
+      # 而不是「.TW」，例如「群聯\n(8299.TWO/8299 TT)」，所以用 TWO? 涵蓋兩種。
       code:
-        pattern: '\((\d{3,6})\.TW/\d{3,6}\s*TT\)'
+        pattern: '\((\d{3,6})\.TWO?/\d{3,6}\s*TT\)'
       name:
-        pattern: '台灣\s+([一-鿿A-Za-z0-9&\-]{1,10})\s*[\r\n\s]*\(\d{3,6}\.TW/\d{3,6}\s*TT\)'
+        pattern: '台灣\s+([一-鿿A-Za-z0-9&\-]{1,10})\s*[\r\n\s]*\(\d{3,6}\.TWO?/\d{3,6}\s*TT\)'
       # 日期格式為中文數字月份，例如「九月 04, 2026」
       date:
         style: cjk_month
