@@ -368,7 +368,13 @@ document.getElementById('btnSync').onclick = syncFromDrive;
 
 (async function init(){
   allRows = await loadJSON(KEY_ROWS, []);
-  selectedCode = await loadJSON(KEY_SELECTED, null);
+  const codeFromUrl = new URLSearchParams(location.search).get('code');
+  if (codeFromUrl && allRows.some(r=>r.code===codeFromUrl)){
+    selectedCode = codeFromUrl;
+    saveJSON(KEY_SELECTED, selectedCode);
+  } else {
+    selectedCode = await loadJSON(KEY_SELECTED, null);
+  }
   if (!selectedCode && allRows.length) selectedCode = allRows[0].code;
   renderStockOptions();
   renderMain();

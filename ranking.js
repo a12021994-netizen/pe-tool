@@ -74,7 +74,7 @@ function buildRankingTable(results){
   if (!results.length) return '<div class="empty">沒有符合條件的股票（需要有報告給予之P/E，且最新報告在9個月內）</div>';
   const trs = results.map(r=>`
     <tr>
-      <td>${r.code} ${r.name}</td>
+      <td><a href="index.html?code=${encodeURIComponent(r.code)}" target="_blank" rel="noopener">${r.code} ${r.name}</a></td>
       <td>${r.latestReportDate}</td>
       <td>${r.latestBroker}</td>
       <td>${r.target != null ? r.target.toLocaleString() : '-'}</td>
