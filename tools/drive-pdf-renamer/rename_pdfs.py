@@ -92,10 +92,18 @@ def extract_report_text(service, file_id: str, max_pages: int = MAX_PAGES) -> st
         return "\n".join(p.extract_text() or "" for p in pages)
 
 
-def detect_broker(text: str, brokers: list[dict]) -> dict | None:
+def broker_haystack(broker: dict, content_text: str, filename: str) -> str:
+    """大多數券商規則是比對 PDF 內容；如果 brokers.yaml 裡該券商設定
+    source: filename，就改比對原始檔名（有些券商發出來的檔名本身就已經包含
+    股票代碼/名稱/日期，直接從檔名抓比重新解析 PDF 內容更準）。"""
+    return filename if broker.get("source") == "filename" else content_text
+
+
+def detect_broker(content_text: str, filename: str, brokers: list[dict]) -> dict | None:
     for broker in brokers:
+        haystack = broker_haystack(broker, content_text, filename)
         for keyword in broker["match"]["contains"]:
-            if keyword in text:
+            if keyword in haystack:
                 return broker
     return None
 
@@ -107,8 +115,9 @@ def parse_date(text: str, date_rule: dict) -> str | None:
         return None
 
     style = date_rule.get("style", "slash")
-    if style in ("slash", "cjk"):
-        # 兩種都是 3 個 group：年、月、日（cjk 只是分隔符是「年/月/日」而不是「/」）
+    if style in ("slash", "cjk", "compact"):
+        # 三種都是 3 個 group：年、月、日（cjk 分隔符是「年/月/日」，compact 是
+        # 像「20260907」這種西元年月日連在一起、沒有分隔符號的格式）
         year, month = match.group(1), match.group(2).zfill(2)
         return f"{year}{month}"
     if style == "roc7":
@@ -135,8 +144,9 @@ def extract_one(text: str, rule: dict) -> str | None:
     return match.group(rule.get("group", 1))
 
 
-def extract_fields(text: str, broker: dict) -> tuple[str, str, str] | None:
+def extract_fields(content_text: str, filename: str, broker: dict) -> tuple[str, str, str] | None:
     """回傳 (股票代碼, 股票名稱, YYYYMM)，抓不到就回傳 None。"""
+    text = broker_haystack(broker, content_text, filename)
     extract = broker["extract"]
 
     code = extract_one(text, extract["code"])
@@ -187,13 +197,13 @@ def main() -> None:
             skipped += 1
             continue
 
-        broker = detect_broker(text, brokers)
+        broker = detect_broker(text, old_name, brokers)
         if broker is None:
             print(f"[略過] {old_name}：沒有任何券商規則命中，可能要在 brokers.yaml 新增規則")
             skipped += 1
             continue
 
-        fields = extract_fields(text, broker)
+        fields = extract_fields(text, old_name, broker)
         if fields is None:
             print(f"[略過] {old_name}：命中券商「{broker['name']}」但抓不到股票代碼/名稱/日期")
             skipped += 1
