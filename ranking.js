@@ -1,4 +1,28 @@
 let allRows = [];
+let currentResults = [];
+let sortState = { key: 'diff', dir: 'desc' };
+
+const RANKING_COLUMNS = [
+  { key: 'stock',      label: '股票',                    get: r => r.name },
+  { key: 'reportDate', label: '最新報告日期',              get: r => r.latestReportDate },
+  { key: 'broker',     label: '券商',                     get: r => r.latestBroker },
+  { key: 'target',     label: '目標價',                   get: r => r.target },
+  { key: 'price',      label: '最新收盤價',                get: r => r.currentPrice },
+  { key: 'reportPE',   label: '報告給予之P/E',             get: r => r.reportPE },
+  { key: 'currentPE',  label: '目前Forward P/E',          get: r => r.currentPE },
+  { key: 'diff',       label: '差（報告P/E − 目前P/E）',    get: r => r.diff },
+  { key: 'link',       label: '報告連結',                  get: null },
+];
+
+function sortRankingBy(key){
+  if (sortState.key === key){
+    sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortState.key = key;
+    sortState.dir = 'asc';
+  }
+  document.getElementById('rankingTableArea').innerHTML = buildRankingTable(currentResults);
+}
 
 async function syncFromDrive(){
   const statusEl = document.getElementById('syncStatus');
@@ -72,7 +96,20 @@ async function buildRankingData(statusEl){
 
 function buildRankingTable(results){
   if (!results.length) return '<div class="empty">沒有符合條件的股票（需要有報告給予之P/E，且最新報告在9個月內）</div>';
-  const trs = results.map(r=>`
+
+  const col = RANKING_COLUMNS.find(c => c.key === sortState.key);
+  const sorted = [...results].sort((a,b)=>{
+    const va = col.get(a), vb = col.get(b);
+    let cmp;
+    if (va == null && vb == null) cmp = 0;
+    else if (va == null) cmp = 1;
+    else if (vb == null) cmp = -1;
+    else if (typeof va === 'string') cmp = va.localeCompare(vb, 'zh-Hant');
+    else cmp = va - vb;
+    return sortState.dir === 'asc' ? cmp : -cmp;
+  });
+
+  const trs = sorted.map(r=>`
     <tr>
       <td><a href="index.html?code=${encodeURIComponent(r.code)}" target="_blank" rel="noopener">${r.code} ${r.name}</a></td>
       <td>${r.latestReportDate}</td>
@@ -84,7 +121,14 @@ function buildRankingTable(results){
       <td style="color:${r.diff>0?'var(--good)':'var(--warn)'}">${r.diff>0?'+':''}${r.diff.toFixed(2)}</td>
       <td>${r.link ? `<a href="${r.link}" target="_blank" rel="noopener">開啟</a>` : '-'}</td>
     </tr>`).join('');
-  return `<table><thead><tr><th>股票</th><th>最新報告日期</th><th>券商</th><th>目標價</th><th>最新收盤價</th><th>報告給予之P/E</th><th>目前Forward P/E</th><th>差（報告P/E − 目前P/E）</th><th>報告連結</th></tr></thead><tbody>${trs}</tbody></table>`;
+
+  const ths = RANKING_COLUMNS.map(c=>{
+    if (!c.get) return `<th>${c.label}</th>`;
+    const arrow = sortState.key === c.key ? (sortState.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    return `<th style="cursor:pointer;user-select:none" onclick="sortRankingBy('${c.key}')" title="點擊排序">${c.label}${arrow}</th>`;
+  }).join('');
+
+  return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
 }
 
 async function renderRanking(){
@@ -93,12 +137,13 @@ async function renderRanking(){
     area.innerHTML = `<div class="empty">尚無資料，請按上方「同步資料」從Google Drive讀取</div>`;
     return;
   }
-  area.innerHTML = `<div id="rankingStatus" class="hint">計算中...</div><div id="rankingTableArea"></div>`;
+  area.innerHTML = `<div id="rankingStatus" class="hint">計算中...</div><div id="rankingTableArea"></div>
+    <div class="hint" style="margin-top:8px">差 = 最新報告給予之P/E − 用今日股價換算的目前Forward P/E。差越大，代表股價相對報告當時假設的估值越便宜（正值可能是機會，負值可能是變貴）。點欄位標題可依該欄排序。</div>`;
   const statusEl = document.getElementById('rankingStatus');
   const results = await buildRankingData(statusEl);
+  currentResults = results;
   statusEl.textContent = `共 ${results.length} 檔符合條件（有報告給予之P/E，且最新報告在9個月內）。`;
-  document.getElementById('rankingTableArea').innerHTML = buildRankingTable(results) +
-    `<div class="hint" style="margin-top:8px">差 = 最新報告給予之P/E − 用今日股價換算的目前Forward P/E。差越大，代表股價相對報告當時假設的估值越便宜（正值可能是機會，負值可能是變貴）。</div>`;
+  document.getElementById('rankingTableArea').innerHTML = buildRankingTable(results);
 }
 
 document.getElementById('btnSync').onclick = syncFromDrive;
