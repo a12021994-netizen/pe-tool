@@ -1,9 +1,11 @@
 let allRows = [];
 let currentResults = [];
 let sortState = { key: 'diff', dir: 'desc' };
+let industryFilter = '';
 
 const RANKING_COLUMNS = [
   { key: 'stock',      label: '股票',                    get: r => r.name },
+  { key: 'industry',   label: '產業分類',                  get: r => r.industry },
   { key: 'reportDate', label: '最新報告日期',              get: r => r.latestReportDate },
   { key: 'broker',     label: '券商',                     get: r => r.latestBroker },
   { key: 'target',     label: '目標價',                   get: r => r.target },
@@ -22,6 +24,23 @@ function sortRankingBy(key){
     sortState.dir = 'asc';
   }
   document.getElementById('rankingTableArea').innerHTML = buildRankingTable(currentResults);
+}
+
+function filterRankingByIndustry(value){
+  industryFilter = value;
+  document.getElementById('rankingTableArea').innerHTML = buildRankingTable(currentResults);
+}
+
+function renderIndustryFilter(results){
+  const industries = [...new Set(results.map(r=>r.industry).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh-Hant'));
+  if (!industries.length) return '';
+  const options = ['<option value="">全部產業</option>']
+    .concat(industries.map(i=>`<option value="${i}" ${industryFilter===i?'selected':''}>${i}</option>`))
+    .join('');
+  return `<div class="row" style="margin-bottom:8px">
+    <span class="label">產業分類</span>
+    <select onchange="filterRankingByIndustry(this.value)">${options}</select>
+  </div>`;
 }
 
 async function syncFromDrive(){
@@ -83,7 +102,7 @@ async function buildRankingData(statusEl){
     const diff = latest.reportPE - currentPE;
 
     results.push({
-      code: s.code, name: s.name,
+      code: s.code, name: s.name, industry: latest.industry,
       latestReportDate: latest.reportDate, latestBroker: latest.broker,
       target: latest.target, currentPrice,
       reportPE: latest.reportPE, currentPE, diff,
@@ -97,8 +116,12 @@ async function buildRankingData(statusEl){
 function buildRankingTable(results){
   if (!results.length) return '<div class="empty">沒有符合條件的股票（需要有報告給予之P/E，且最新報告在9個月內）</div>';
 
+  const filterHtml = renderIndustryFilter(results);
+  const filtered = industryFilter ? results.filter(r=>r.industry === industryFilter) : results;
+  if (!filtered.length) return filterHtml + '<div class="empty">此產業分類下沒有符合條件的股票</div>';
+
   const col = RANKING_COLUMNS.find(c => c.key === sortState.key);
-  const sorted = [...results].sort((a,b)=>{
+  const sorted = [...filtered].sort((a,b)=>{
     const va = col.get(a), vb = col.get(b);
     let cmp;
     if (va == null && vb == null) cmp = 0;
@@ -112,6 +135,7 @@ function buildRankingTable(results){
   const trs = sorted.map(r=>`
     <tr>
       <td><a href="index.html?code=${encodeURIComponent(r.code)}" target="_blank" rel="noopener">${r.code} ${r.name}</a></td>
+      <td>${r.industry || '-'}</td>
       <td>${r.latestReportDate}</td>
       <td>${r.latestBroker}</td>
       <td>${r.target != null ? r.target.toLocaleString() : '-'}</td>
@@ -128,7 +152,7 @@ function buildRankingTable(results){
     return `<th style="cursor:pointer;user-select:none" onclick="sortRankingBy('${c.key}')" title="點擊排序">${c.label}${arrow}</th>`;
   }).join('');
 
-  return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
+  return `${filterHtml}<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
 }
 
 async function renderRanking(){
