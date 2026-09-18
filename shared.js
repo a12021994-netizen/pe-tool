@@ -78,7 +78,7 @@ function rowsFromCSV(text){
   const iCode=idx('代碼'), iName=idx('名稱'), iDate=idx('報告日期'), iBroker=idx('券商'),
         iTarget=idx('目標價'), iPrice=idx('報告當天股價'), iThis=idx('當年度EPS'),
         iNext=idx('次年度EPS'), iRecent=idx('最近兩季預估EPS(最近一季+預估下一季)'), iFPE=idx('Forward PE'),
-        iReportPE=idx('報告給予之本益比倍數'), iLink=idx('報告連結');
+        iReportPE=idx('報告給予之本益比倍數'), iLink=idx('報告連結'), iIndustry=idx('產業分類');
   if (iCode === -1 || iName === -1 || iDate === -1){
     throw new Error('CSV欄位名稱對不上（找不到「代碼」「名稱」或「報告日期」欄），請確認資料表格式沒有跑掉');
   }
@@ -103,6 +103,7 @@ function rowsFromCSV(text){
       })(),
       reportPERaw: (iReportPE !== -1 && row[iReportPE]) ? row[iReportPE].trim() : null,
       link: (iLink !== -1 && row[iLink]) ? row[iLink].trim() : null,
+      industry: (iIndustry !== -1 && row[iIndustry]) ? row[iIndustry].trim() : null,
       forwardPE: (row[iFPE]||'').trim() // e.g. "25.4x (24F)" or "N/A (24F)"
     });
   }
