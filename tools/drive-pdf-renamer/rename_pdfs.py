@@ -137,11 +137,20 @@ def parse_date(text: str, date_rule: dict) -> str | None:
 
 
 def extract_one(text: str, rule: dict) -> str | None:
-    """依 rule 的 pattern 搜尋文字，回傳指定 group（預設第 1 組）的內容。"""
+    """依 rule 的 pattern 搜尋文字，回傳指定 group 的內容。
+
+    沒指定 group 時，預設用 match.lastindex（該次比對「實際有吃到內容」的
+    group），而不是死板地固定用 group(1) —— 這是為了支援用 A|B 兩種寫法涵蓋
+    同一券商不同報告子格式的 pattern（例如凱基投顧「動態更新」跟「法說會重點
+    摘要」兩種版型的代碼/名稱位置不同，各自的擷取用括號在 A、B 分支各佔一組，
+    要抓到的內容永遠在「實際比對成功的那個分支」的 group，而不是固定編號）。
+    """
     match = re.search(rule["pattern"], text)
     if not match:
         return None
-    return match.group(rule.get("group", 1))
+    if "group" in rule:
+        return match.group(rule["group"])
+    return match.group(match.lastindex or 1)
 
 
 def extract_fields(content_text: str, filename: str, broker: dict) -> tuple[str, str, str] | None:
