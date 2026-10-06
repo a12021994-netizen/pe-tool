@@ -20,6 +20,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 import yaml
@@ -89,7 +90,14 @@ def extract_report_text(service, file_id: str, max_pages: int = MAX_PAGES) -> st
     buf.seek(0)
     with pdfplumber.open(buf) as pdf:
         pages = pdf.pages[:max_pages]
-        return "\n".join(p.extract_text() or "" for p in pages)
+        text = "\n".join(p.extract_text() or "" for p in pages)
+    # 用 NFKC 正規化：有些報告（通常是舊版 Word 轉存的 PDF）內嵌字型把常見中文字
+    # 對應到「CJK 相容表意文字」這個少見的 Unicode 區塊（例如「復」被存成
+    # U+F966 而不是標準的 U+5FA9），這種字元會被 extract.name 的
+    # 「一-鿿」字元範圍漏掉導致抓不到股票名稱；NFKC 會把這類相容字元/全形符號
+    # 轉回標準字元（全形括號「（）」、全形斜線「／」也會一併轉成半形），
+    # 比在每個券商規則裡個別加字元範圍更一勞永逸。
+    return unicodedata.normalize("NFKC", text)
 
 
 def broker_haystack(broker: dict, content_text: str, filename: str) -> str:
