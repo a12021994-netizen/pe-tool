@@ -171,7 +171,14 @@ def extract_fields(content_text: str, filename: str, broker: dict) -> tuple[str,
     if code is None or name is None:
         return None
 
-    yyyymm = parse_date(text, extract["date"])
+    # date 規則可以用 source 覆寫整個券商預設的來源：例如代碼/名稱在 PDF
+    # 內文裡很穩定，但內文完全沒印日期、只有原始檔名裡才有（見台新證券），
+    # 這種情況不用整個券商都改成讀檔名，只要 date 這條規則單獨指定
+    # source: filename 就好。沒指定的話沿用券商層級的 source（跟 code/name
+    # 一樣）。
+    date_source = extract["date"].get("source", broker.get("source"))
+    date_text = filename if date_source == "filename" else content_text
+    yyyymm = parse_date(date_text, extract["date"])
     if yyyymm is None:
         return None
 
