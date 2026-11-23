@@ -71,7 +71,7 @@ async function syncFromDrive(){
 }
 
 // 差 = 最新報告給予之P/E − 用今日股價換算的目前Forward P/E，由大到小排序。
-// 只納入「最新一份報告在9個月內」且有「報告給予之P/E」的股票。
+// 只納入「最新一份報告在9個月內」的股票；沒有「報告給予之P/E」的股票也會列入，但差欄位留空。
 async function buildRankingData(statusEl){
   const codes = stockListFrom(allRows);
   const nineMonthsAgo = new Date();
@@ -86,7 +86,6 @@ async function buildRankingData(statusEl){
     if (statusEl) statusEl.textContent = `計算排行中...${done}/${codes.length}`;
     if (!latest) continue;
     if (new Date(latest.reportDate) < nineMonthsAgo) continue;
-    if (latest.reportPE == null) continue;
 
     let currentPrice = priceHistoryCache[s.code] && priceHistoryCache[s.code].length
       ? priceHistoryCache[s.code][priceHistoryCache[s.code].length - 1].close
@@ -97,9 +96,8 @@ async function buildRankingData(statusEl){
     const today = new Date();
     const useNext = today.getMonth() >= 6;
     const eps = useNext ? latest.epsNextYear : latest.epsThisYear;
-    if (eps == null || eps <= 0 || currentPrice == null) continue;
-    const currentPE = currentPrice / eps;
-    const diff = latest.reportPE - currentPE;
+    const currentPE = (eps != null && eps > 0 && currentPrice != null) ? currentPrice / eps : null;
+    const diff = (latest.reportPE != null && currentPE != null) ? latest.reportPE - currentPE : null;
 
     results.push({
       code: s.code, name: s.name, industry: latest.industry,
@@ -109,12 +107,17 @@ async function buildRankingData(statusEl){
       link: latest.link
     });
   }
-  results.sort((a,b)=> b.diff - a.diff);
+  results.sort((a,b)=>{
+    if (a.diff == null && b.diff == null) return 0;
+    if (a.diff == null) return 1;
+    if (b.diff == null) return -1;
+    return b.diff - a.diff;
+  });
   return results;
 }
 
 function buildRankingTable(results){
-  if (!results.length) return '<div class="empty">沒有符合條件的股票（需要有報告給予之P/E，且最新報告在9個月內）</div>';
+  if (!results.length) return '<div class="empty">沒有符合條件的股票（最新報告在9個月內）</div>';
 
   const filterHtml = renderIndustryFilter(results);
   const filtered = industryFilter ? results.filter(r=>r.industry === industryFilter) : results;
@@ -123,12 +126,10 @@ function buildRankingTable(results){
   const col = RANKING_COLUMNS.find(c => c.key === sortState.key);
   const sorted = [...filtered].sort((a,b)=>{
     const va = col.get(a), vb = col.get(b);
-    let cmp;
-    if (va == null && vb == null) cmp = 0;
-    else if (va == null) cmp = 1;
-    else if (vb == null) cmp = -1;
-    else if (typeof va === 'string') cmp = va.localeCompare(vb, 'zh-Hant');
-    else cmp = va - vb;
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    const cmp = typeof va === 'string' ? va.localeCompare(vb, 'zh-Hant') : va - vb;
     return sortState.dir === 'asc' ? cmp : -cmp;
   });
 
@@ -140,9 +141,9 @@ function buildRankingTable(results){
       <td>${r.latestBroker}</td>
       <td>${r.target != null ? r.target.toLocaleString() : '-'}</td>
       <td>${r.currentPrice != null ? r.currentPrice.toLocaleString() : '-'}</td>
-      <td>${r.reportPE.toFixed(2)}x</td>
-      <td>${r.currentPE.toFixed(2)}x</td>
-      <td style="color:${r.diff>0?'var(--good)':'var(--warn)'}">${r.diff>0?'+':''}${r.diff.toFixed(2)}</td>
+      <td>${r.reportPE != null ? r.reportPE.toFixed(2)+'x' : '-'}</td>
+      <td>${r.currentPE != null ? r.currentPE.toFixed(2)+'x' : '-'}</td>
+      <td style="${r.diff != null ? `color:${r.diff>0?'var(--good)':'var(--warn)'}` : ''}">${r.diff != null ? (r.diff>0?'+':'')+r.diff.toFixed(2) : '-'}</td>
       <td>${r.link ? `<a href="${r.link}" target="_blank" rel="noopener">開啟</a>` : '-'}</td>
     </tr>`).join('');
 
@@ -162,11 +163,11 @@ async function renderRanking(){
     return;
   }
   area.innerHTML = `<div id="rankingStatus" class="hint">計算中...</div><div id="rankingTableArea"></div>
-    <div class="hint" style="margin-top:8px">差 = 最新報告給予之P/E − 用今日股價換算的目前Forward P/E。差越大，代表股價相對報告當時假設的估值越便宜（正值可能是機會，負值可能是變貴）。點欄位標題可依該欄排序。</div>`;
+    <div class="hint" style="margin-top:8px">差 = 最新報告給予之P/E − 用今日股價換算的目前Forward P/E。差越大，代表股價相對報告當時假設的估值越便宜（正值可能是機會，負值可能是變貴）。沒有報告給予之P/E的股票也會列出，但差欄位顯示「-」，排序時固定排在最後。點欄位標題可依該欄排序。</div>`;
   const statusEl = document.getElementById('rankingStatus');
   const results = await buildRankingData(statusEl);
   currentResults = results;
-  statusEl.textContent = `共 ${results.length} 檔符合條件（有報告給予之P/E，且最新報告在9個月內）。`;
+  statusEl.textContent = `共 ${results.length} 檔符合條件（最新報告在9個月內）。`;
   document.getElementById('rankingTableArea').innerHTML = buildRankingTable(results);
 }
 
